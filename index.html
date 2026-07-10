@@ -50,7 +50,7 @@
       <div class="wrap">
         <div class="section-head">
           <h2>Fund ledger</h2>
-          <p class="section-note">Sample data shown for layout purposes — connect a live NAV feed before publishing. See notes at the bottom of the page.</p>
+          <p class="section-note" id="updatedStamp">Loading fund data…</p>
         </div>
         <div class="fund-grid" id="fundGrid"></div>
       </div>
@@ -62,11 +62,16 @@
           <h2>Compare performance</h2>
           <p class="section-note">Toggle funds on or off to compare 12-month NAV movement.</p>
         </div>
-        <div class="compare-panel">
+        <div class="compare-panel" id="comparePanel">
           <div class="compare-toggles" id="compareToggles"></div>
           <div class="chart-frame">
             <canvas id="compareChart" height="260"></canvas>
           </div>
+        </div>
+        <div class="collecting" id="compareEmpty" style="display:none">
+          Not enough data yet to compare. Charts appear once at least two funds
+          each have a few NAV points recorded. Add prices via the manual helper
+          or let the scraper collect them over the coming days.
         </div>
       </div>
     </section>

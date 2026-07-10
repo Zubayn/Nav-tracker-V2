@@ -1,202 +1,179 @@
 // ---------------------------------------------------------------
-// SAMPLE DATA — replace with a real NAV feed before publishing.
-// Each fund: 12 monthly NAV points (per unit, in RM).
+// Reads real NAV data from data/funds.json (populated by manual
+// entry and/or the permitted-source scraper). Charts only render
+// once a fund has enough data points; otherwise a friendly
+// "collecting data" state shows instead.
 // ---------------------------------------------------------------
-const months = ['Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar','Apr','May','Jun','Jul'];
 
-const fundData = [
-  {
-    code: 'ASM',
-    name: 'Amanah Saham Malaysia',
-    manager: 'PNB',
-    color: '#C9A227',
-    nav: [1.0000,1.0012,1.0025,1.0018,1.0031,1.0040,1.0052,1.0048,1.0061,1.0075,1.0082,1.0090]
-  },
-  {
-    code: 'ASB',
-    name: 'Amanah Saham Bumiputera',
-    manager: 'PNB',
-    color: '#E8C765',
-    nav: [1.0000,1.0009,1.0016,1.0021,1.0028,1.0033,1.0039,1.0044,1.0051,1.0058,1.0063,1.0070]
-  },
-  {
-    code: 'PBGROWTH',
-    name: 'Public Growth Fund',
-    manager: 'Public Mutual',
-    color: '#4C9F70',
-    nav: [0.8200,0.8305,0.8190,0.8410,0.8520,0.8380,0.8600,0.8710,0.8590,0.8750,0.8830,0.8920]
-  },
-  {
-    code: 'MAYB-EQ',
-    name: 'Maybank Equity Trust',
-    manager: 'Maybank AM',
-    color: '#6FA8DC',
-    nav: [0.6100,0.6180,0.6050,0.6220,0.6290,0.6170,0.6350,0.6410,0.6280,0.6440,0.6520,0.6600]
-  },
-  {
-    code: 'CIMB-DIV',
-    name: 'CIMB Principal Dividend',
-    manager: 'CIMB Principal',
-    color: '#C15B4A',
-    nav: [0.4500,0.4460,0.4520,0.4480,0.4550,0.4610,0.4570,0.4630,0.4690,0.4650,0.4710,0.4770]
-  },
-  {
-    code: 'RHB-GR',
-    name: 'RHB Growth Fund',
-    manager: 'RHB Asset Mgmt',
-    color: '#9B7FD4',
-    nav: [0.7200,0.7150,0.7280,0.7340,0.7260,0.7410,0.7470,0.7390,0.7520,0.7580,0.7500,0.7640]
-  }
-];
+const MIN_POINTS_FOR_CHART = 3;
 
-// ---------------------------------------------------------------
-// Ticker board
-// ---------------------------------------------------------------
-function pctChange(nav){
-  const first = nav[nav.length-2], last = nav[nav.length-1];
-  return ((last-first)/first*100);
+async function loadData() {
+  const res = await fetch('data/funds.json', { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Could not load funds.json (${res.status})`);
+  return res.json();
 }
 
-function renderTicker(){
+function pctChange(history) {
+  if (history.length < 2) return null;
+  const prev = history[history.length - 2].nav;
+  const last = history[history.length - 1].nav;
+  return ((last - prev) / prev) * 100;
+}
+
+function fmtPct(p) {
+  if (p === null) return '—';
+  return `${p >= 0 ? '+' : ''}${p.toFixed(2)}%`;
+}
+
+// ---- Ticker ----
+function renderTicker(funds) {
   const track = document.getElementById('tickerTrack');
-  const items = [...fundData, ...fundData]; // loop content twice for seamless scroll
+  const priced = funds.filter(f => f.history.length || f.fixedPrice);
+  if (!priced.length) { track.innerHTML = ''; return; }
+  const items = [...priced, ...priced];
   track.innerHTML = items.map(f => {
-    const chg = pctChange(f.nav);
-    const dir = chg >= 0 ? 'up' : 'down';
-    const sign = chg >= 0 ? '+' : '';
+    const nav = f.fixedPrice ?? (f.history.length ? f.history[f.history.length - 1].nav : null);
+    const chg = pctChange(f.history);
+    const dir = chg === null ? '' : (chg >= 0 ? 'up' : 'down');
     return `<span class="ticker-item">
       <span class="code">${f.code}</span>
-      <span class="nav">RM ${f.nav[f.nav.length-1].toFixed(4)}</span>
-      <span class="chg ${dir}">${sign}${chg.toFixed(2)}%</span>
+      <span class="nav">RM ${nav !== null ? nav.toFixed(4) : '—'}</span>
+      <span class="chg ${dir}">${fmtPct(chg)}</span>
     </span>`;
   }).join('');
 }
 
-// ---------------------------------------------------------------
-// Fund cards with sparklines
-// ---------------------------------------------------------------
-function renderFundCards(){
+// ---- Fund cards ----
+function renderFundCards(funds) {
   const grid = document.getElementById('fundGrid');
-  grid.innerHTML = fundData.map(f => `
-    <div class="fund-card">
-      <div class="fund-card-top">
-        <div>
-          <div class="fund-name">${f.name}</div>
-          <div class="fund-manager">${f.manager}</div>
-        </div>
-        <span class="fund-code">${f.code}</span>
-      </div>
-      <div class="fund-nav-row">
-        <span class="fund-nav">RM ${f.nav[f.nav.length-1].toFixed(4)}</span>
-        <span class="fund-chg ${pctChange(f.nav)>=0?'up':'down'}">
-          ${pctChange(f.nav)>=0?'+':''}${pctChange(f.nav).toFixed(2)}%
-        </span>
-      </div>
-      <canvas class="spark" id="spark-${f.code}"></canvas>
-    </div>
-  `).join('');
+  grid.innerHTML = funds.map(f => {
+    const isFixed = f.type === 'fixed';
+    const nav = f.fixedPrice ?? (f.history.length ? f.history[f.history.length - 1].nav : null);
+    const chg = pctChange(f.history);
+    const enough = f.history.length >= MIN_POINTS_FOR_CHART;
 
-  fundData.forEach(f => {
+    let visual;
+    if (isFixed) {
+      visual = `<div class="fixed-note">Fixed price · tracks annual distribution</div>`;
+    } else if (enough) {
+      visual = `<canvas class="spark" id="spark-${f.code}"></canvas>`;
+    } else {
+      const need = MIN_POINTS_FOR_CHART - f.history.length;
+      visual = `<div class="collecting">Collecting data — ${need} more point${need === 1 ? '' : 's'} until chart</div>`;
+    }
+
+    return `
+      <div class="fund-card">
+        <div class="fund-card-top">
+          <div>
+            <div class="fund-name">${f.name}</div>
+            <div class="fund-manager">${f.manager}</div>
+          </div>
+          <span class="fund-code">${f.code}</span>
+        </div>
+        <div class="fund-nav-row">
+          <span class="fund-nav">RM ${nav !== null ? nav.toFixed(4) : '—'}</span>
+          <span class="fund-chg ${chg === null ? '' : (chg >= 0 ? 'up' : 'down')}">${fmtPct(chg)}</span>
+        </div>
+        ${visual}
+      </div>`;
+  }).join('');
+
+  funds.filter(f => f.type !== 'fixed' && f.history.length >= MIN_POINTS_FOR_CHART).forEach(f => {
     const ctx = document.getElementById(`spark-${f.code}`);
+    if (!ctx) return;
     new Chart(ctx, {
       type: 'line',
       data: {
-        labels: months,
+        labels: f.history.map(h => h.date),
         datasets: [{
-          data: f.nav,
-          borderColor: f.color,
-          borderWidth: 2,
-          pointRadius: 0,
-          tension: 0.35,
-          fill: false
+          data: f.history.map(h => h.nav),
+          borderColor: f.color, borderWidth: 2, pointRadius: 0, tension: 0.35, fill: false
         }]
       },
       options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display:false }, tooltip: { enabled:false } },
-        scales: { x: { display:false }, y: { display:false } },
-        elements: { line: { borderJoinStyle:'round' } }
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        scales: { x: { display: false }, y: { display: false } }
       }
     });
   });
 }
 
-// ---------------------------------------------------------------
-// Compare chart with toggles
-// ---------------------------------------------------------------
+// ---- Compare chart ----
 let compareChart;
-const activeFunds = new Set(fundData.map(f => f.code));
+function renderCompare(funds) {
+  const chartable = funds.filter(f => f.type !== 'fixed' && f.history.length >= MIN_POINTS_FOR_CHART);
+  const panel = document.getElementById('comparePanel');
+  const emptyMsg = document.getElementById('compareEmpty');
 
-function renderToggles(){
-  const wrap = document.getElementById('compareToggles');
-  wrap.innerHTML = fundData.map(f => `
+  if (!chartable.length) {
+    if (panel) panel.style.display = 'none';
+    if (emptyMsg) emptyMsg.style.display = 'block';
+    return;
+  }
+  if (panel) panel.style.display = 'grid';
+  if (emptyMsg) emptyMsg.style.display = 'none';
+
+  const active = new Set(chartable.map(f => f.code));
+  const allDates = [...new Set(chartable.flatMap(f => f.history.map(h => h.date)))].sort();
+
+  const toggles = document.getElementById('compareToggles');
+  toggles.innerHTML = chartable.map(f => `
     <div class="toggle-pill" data-code="${f.code}">
       <span class="swatch" style="background:${f.color}"></span>
       <span>${f.code}</span>
-    </div>
-  `).join('');
+    </div>`).join('');
 
-  wrap.querySelectorAll('.toggle-pill').forEach(pill => {
+  function datasets() {
+    return chartable.filter(f => active.has(f.code)).map(f => {
+      const byDate = Object.fromEntries(f.history.map(h => [h.date, h.nav]));
+      return {
+        label: f.code,
+        data: allDates.map(d => byDate[d] ?? null),
+        borderColor: f.color, backgroundColor: f.color,
+        borderWidth: 2, pointRadius: 0, tension: 0.3, spanGaps: true
+      };
+    });
+  }
+
+  const ctx = document.getElementById('compareChart');
+  compareChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels: allDates, datasets: datasets() },
+    options: {
+      responsive: true,
+      plugins: { legend: { labels: { color: '#AAB6C2', font: { family: 'IBM Plex Mono', size: 11 } } } },
+      scales: {
+        x: { ticks: { color: '#AAB6C2', maxTicksLimit: 8 }, grid: { color: 'rgba(243,239,232,0.06)' } },
+        y: { ticks: { color: '#AAB6C2' }, grid: { color: 'rgba(243,239,232,0.06)' } }
+      }
+    }
+  });
+
+  toggles.querySelectorAll('.toggle-pill').forEach(pill => {
     pill.addEventListener('click', () => {
       const code = pill.dataset.code;
-      if (activeFunds.has(code)) {
-        activeFunds.delete(code);
-        pill.classList.add('off');
-      } else {
-        activeFunds.add(code);
-        pill.classList.remove('off');
-      }
-      updateCompareChart();
+      if (active.has(code)) { active.delete(code); pill.classList.add('off'); }
+      else { active.add(code); pill.classList.remove('off'); }
+      compareChart.data.datasets = datasets();
+      compareChart.update();
     });
   });
 }
 
-function updateCompareChart(){
-  compareChart.data.datasets = fundData
-    .filter(f => activeFunds.has(f.code))
-    .map(f => ({
-      label: f.code,
-      data: f.nav,
-      borderColor: f.color,
-      backgroundColor: f.color,
-      borderWidth: 2,
-      pointRadius: 0,
-      tension: 0.3
-    }));
-  compareChart.update();
-}
-
-function renderCompareChart(){
-  const ctx = document.getElementById('compareChart');
-  compareChart = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: months,
-      datasets: fundData.map(f => ({
-        label: f.code,
-        data: f.nav,
-        borderColor: f.color,
-        backgroundColor: f.color,
-        borderWidth: 2,
-        pointRadius: 0,
-        tension: 0.3
-      }))
-    },
-    options: {
-      responsive: true,
-      plugins: {
-        legend: { labels: { color:'#AAB6C2', font:{ family:'IBM Plex Mono', size:11 } } }
-      },
-      scales: {
-        x: { ticks:{ color:'#AAB6C2' }, grid:{ color:'rgba(243,239,232,0.06)' } },
-        y: { ticks:{ color:'#AAB6C2' }, grid:{ color:'rgba(243,239,232,0.06)' } }
-      }
-    }
-  });
-}
-
-renderTicker();
-renderFundCards();
-renderToggles();
-renderCompareChart();
+(async function init() {
+  try {
+    const data = await loadData();
+    const funds = data.funds;
+    renderTicker(funds);
+    renderFundCards(funds);
+    renderCompare(funds);
+    const stamp = document.getElementById('updatedStamp');
+    if (stamp && data.updated) stamp.textContent = `Data last updated: ${data.updated}`;
+  } catch (e) {
+    console.error(e);
+    const grid = document.getElementById('fundGrid');
+    if (grid) grid.innerHTML = `<div class="collecting">Couldn't load fund data. Check that data/funds.json exists.</div>`;
+  }
+})();
